@@ -1,8 +1,14 @@
+from __future__ import print_function, division
 import SimpleITK as sitk
 import numpy as np
 import csv
 from glob import glob
 import pandas as pd
+try:
+    from tqdm import tqdm # long waits are not fun
+except:
+    print('TQDM does make much nicer wait bars...')
+    tqdm = lambda x: x
 
 #Some helper functions
 
@@ -65,56 +71,45 @@ file_list=glob(luna_subset_path+"*.mhd")
 #
 # Helper function to get rows in data frame associated 
 # with each file
-def get_filename(case):
-    global file_list
+def get_filename(file_list, case):
     for f in file_list:
         if case in f:
             return(f)
 #
 # The locations of the nodes
 df_node = pd.read_csv(luna_path+"annotations.csv")
-df_node["file"] = df_node["seriesuid"].apply(get_filename)
+df_node["file"] = df_node["seriesuid"].map(lambda file_name: get_filename(file_list, file_name))
 df_node = df_node.dropna()
 
 #####
 #
 # Looping over the image files
 #
-fcount = 0
-for img_file in file_list:
-    print "Getting mask for image file %s" % img_file.replace(luna_subset_path,"")
+for fcount, img_file in enumerate(tqdm(file_list)):
     mini_df = df_node[df_node["file"]==img_file] #get all nodules associate with file
-    if len(mini_df)>0:    # some files may not have a nodule--skipping those 
-        biggest_node = np.argsort(mini_df["diameter_mm"].values)[-1]   # just using the biggest node
-        node_x = mini_df["coordX"].values[biggest_node]
-        node_y = mini_df["coordY"].values[biggest_node]
-        node_z = mini_df["coordZ"].values[biggest_node]
-        diam = mini_df["diameter_mm"].values[biggest_node]
-
-        #
-        # extracting image
-        #
-        itk_img = sitk.ReadImage(img_file)
-        img_array = sitk.GetArrayFromImage(itk_img) #indexes are z,y,x
-        num_z,height,width = img_array.shape        #heightXwidth constitute the transverse plane
-        imgs = np.ndarray([3,height,width],dtype=np.uint16)
-        masks = np.ndarray([3,height,width],dtype=np.uint8)
-        center = np.array([node_x,node_y,node_z])  #nodule center
-        origin = np.array(itk_img.GetOrigin()) #x,y,z  Origin in world coordinates (mm)
-        spacing = np.array(itk_img.GetSpacing())# spacing of voxels in world coor. (mm)
-        v_center =np.rint((center-origin)/spacing)  # nodule center in voxel space
-        #
-        # for each slice in the image, convert the image data to the uint16 range
-        # and generate a binary mask for the nodule location
-        #
-        i = 0
-        for i_z in range(int(v_center[2])-1,int(v_center[2])+2):
-            mask = make_mask(center,diam,i_z*spacing[2]+origin[2],width,height,spacing,origin)
-            masks[i] = mask
-            imgs[i] = matrix2int16(img_array[i_z])
-            i+=1
-        #
-
-        np.save(output_path+"images_%d.npy" % (fcount) ,imgs)
-        np.save(output_path+"masks_%d.npy" % (fcount) ,masks)
-        fcount+=1
+    if mini_df.shape[0]>0: # some files may not have a nodule--skipping those 
+        # load the data once
+        itk_img = sitk.ReadImage(img_file) 
+        img_array = sitk.GetArrayFromImage(itk_img) # indexes are z,y,x (notice the ordering)
+        num_z, height, width = img_array.shape        #heightXwidth constitute the transverse plane
+        origin = np.array(itk_img.GetOrigin())      # x,y,z  Origin in world coordinates (mm)
+        spacing = np.array(itk_img.GetSpacing())    # spacing of voxels in world coor. (mm)
+        # go through all nodes (why just the biggest?)
+        for node_idx, cur_row in mini_df.iterrows():       
+            node_x = cur_row["coordX"]
+            node_y = cur_row["coordY"]
+            node_z = cur_row["coordZ"]
+            diam = cur_row["diameter_mm"]
+            # just keep 3 slices
+            imgs = np.ndarray([3,height,width],dtype=np.float32)
+            masks = np.ndarray([3,height,width],dtype=np.uint8)
+            center = np.array([node_x, node_y, node_z])   # nodule center
+            v_center = np.rint((center-origin)/spacing)  # nodule center in voxel space (still x,y,z ordering)
+            for i, i_z in enumerate(np.arange(int(v_center[2])-1,
+                             int(v_center[2])+2).clip(0, num_z-1)): # clip prevents going out of bounds in Z
+                mask = make_mask(center, diam, i_z*spacing[2]+origin[2],
+                                 width, height, spacing, origin)
+                masks[i] = mask
+                imgs[i] = img_array[i_z]
+            np.save(os.path.join(output_path,"images_%04d_%04d.npy" % (fcount, node_idx)),imgs)
+            np.save(os.path.join(output_path,"masks_%04d_%04d.npy" % (fcount, node_idx)),masks)
