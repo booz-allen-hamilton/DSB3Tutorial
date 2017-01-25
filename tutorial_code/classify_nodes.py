@@ -71,7 +71,9 @@ def getRegionMetricRow(fname = "nodules.npy"):
 
 def createFeatureDataset(nodfiles=None):
     if nodfiles == None:
-        noddir = "/home/jmulholland/NLST_nodules/"
+        # directory of numpy arrays containing masks for nodules
+        # found via unet segmentation
+        noddir = "/training_set/" 
         nodfiles = glob(noddir +"*npy")
     # dict with mapping between truth and 
     truthdata = pickle.load(open("truthdict.pkl",'r'))
