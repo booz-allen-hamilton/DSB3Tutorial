@@ -75,7 +75,8 @@ def createFeatureDataset(nodfiles=None):
         # found via unet segmentation
         noddir = "/training_set/" 
         nodfiles = glob(noddir +"*npy")
-    # dict with mapping between truth and 
+    # dict with mapping between training examples and true labels
+    # the training set is the output masks from the unet segmentation
     truthdata = pickle.load(open("truthdict.pkl",'r'))
     numfeatures = 9
     feature_array = np.zeros((len(nodfiles),numfeatures))
